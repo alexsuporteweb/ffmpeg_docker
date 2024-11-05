@@ -1,0 +1,235 @@
+services:
+
+  watchlive_php:
+    container_name: watchlive_php
+    build:
+      target: watchlive_php
+      dockerfile: docker/Dockerfile
+    restart: always
+    ports:
+      - "9000:9000"
+      - "10055:10050"
+    environment:
+      - ZBX_HOSTNAME=watchlive_php
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    volumes:
+      - ./app:/var/www/html
+    working_dir: /var/www/html
+    networks:
+      - watchlive_network
+
+  watchlive_nginx:
+    container_name: watchlive_nginx
+    build:
+      target: watchlive_nginx
+      dockerfile: docker/Dockerfile
+    restart: always
+    depends_on:
+      - watchlive_php
+    environment:
+      - ZBX_HOSTNAME=watchlive_nginx
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    volumes:
+      - ./app:/var/www/html
+      - ./stream/hls/live:/var/hls/live
+    ports:
+      - "8080:8080"
+      - "1935:1935"
+      - "10056:10050"
+    networks:
+      - watchlive_network
+
+  watchlive_database:
+    container_name: watchlive_database
+    build:
+      target: watchlive_database
+      dockerfile: docker/Dockerfile
+    restart: always
+    environment:
+      - MARIADB_HOST=watchlive
+      - MARIADB_ROOT_PASSWORD=watchlive
+      - MARIADB_DATABASE=watchlive
+      - MARIADB_USER=watchlive
+      - MARIADB_PASSWORD=watchlive
+      - ZBX_HOSTNAME=watchlive_database
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    volumes:
+      - ./db:/var/lib/mysql
+      - ./mariadb/conf/70-cluster.conf:/etc/mysql/conf.d/70-cluster.conf
+      - ./mariadb/conf/70-innodb.conf:/etc/mysql/conf.d/70-innodb.conf
+      - ./mariadb/conf/70-log.conf:/etc/mysql/conf.d/70-log.conf
+      - ./mariadb/conf/70-myisam.conf:/etc/mysql/conf.d/70-myisam.conf
+      - ./mariadb/conf/70-server.conf:/etc/mysql/conf.d/70-server.conf
+      - ./mariadb/conf/70-ssl.conf:/etc/mysql/conf.d/70-ssl.conf
+      - ./mariadb/conf/limits.conf:/etc/mysql/conf.d/limits.conf
+      - ./mariadb/conf/my.conf:/etc/mysql/conf.d/my.conf
+      - ./mariadb/init/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      bash -c "chmod 644 /etc/mysql/conf.d/my.conf && chown -R 999:999 /var/lib/mysql && docker-entrypoint.sh mariadbd"
+    ports:
+      - "3306:3306"
+      - "10057:10050"
+    networks:
+      - watchlive_network
+
+  watchlive_pma:
+    container_name: watchlive_pma
+    build:
+      target: watchlive_pma
+      dockerfile: docker/Dockerfile
+    restart: always
+    depends_on:
+      - watchlive_database
+    links:
+      - watchlive_database
+    environment:
+      - PMA_HOST=watchlive
+      - PMA_PORT=3306
+      - PMA_ARBITRARY=1
+      - ZBX_HOSTNAME=watchlive_pma
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    tty: true
+    ports:
+      - "8085:80"
+      - "10058:10050"
+    networks:
+      - watchlive_network
+
+  watchlive_dbeaver:
+    container_name: watchlive_dbeaver
+    build:
+      target: watchlive_dbeaver
+      dockerfile: docker/Dockerfile
+    restart: always
+    depends_on:
+      - watchlive_database
+      - zabbix_database
+    links:
+      - watchlive_database
+      - zabbix_database
+    environment:
+      - ZBX_HOSTNAME=watchlive_dbeaver
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    ports:
+      - "8081:8978"
+      - "10059:10050"
+    networks:
+      - watchlive_network
+
+  zabbix_database:
+    container_name: zabbix_database
+    build:
+      target: zabbix_database
+      dockerfile: docker/Dockerfile
+    restart: always
+    environment:
+      - POSTGRES_DB=zabbix
+      - POSTGRES_USER=zabbix
+      - POSTGRES_PASSWORD=zabbix
+      - ZBX_HOSTNAME=zabbix_database
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "10053:10050"
+    networks:
+      - watchlive_network
+
+  zabbix_server:
+    container_name: zabbix_server
+    build:
+      target: zabbix_server
+      dockerfile: docker/Dockerfile
+    restart: always
+    links:
+      - zabbix_database
+    environment:
+      - DB_SERVER_HOST=zabbix_database
+      - DB_SERVER_PORT=5432
+      - POSTGRES_DB=zabbix
+      - POSTGRES_USER=zabbix
+      - POSTGRES_PASSWORD=zabbix
+      - CacheSize=64M
+      - ZBX_HOSTNAME=zabbix_server
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_NAME=zabbix_server
+    volumes:
+      - zabbix-server-data:/var/lib/zabbix
+    ports:
+      - "10051:10051"
+      - "10052:10050"
+    networks:
+      - watchlive_network
+
+  zabbix_frontend:
+    container_name: zabbix_frontend
+    build:
+      target: zabbix_frontend
+      dockerfile: docker/Dockerfile
+    restart: always
+    environment:
+      - DB_SERVER_HOST=zabbix_database
+      - DB_SERVER_PORT=5432
+      - POSTGRES_DB=zabbix
+      - POSTGRES_USER=zabbix
+      - POSTGRES_PASSWORD=zabbix
+      - PHP_TZ=America/Cuiaba
+      - ZBX_HOSTNAME=zabbix_database
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_NAME=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix-server
+    ports:
+      - "8082:8080"
+      - "10054:10050"
+    volumes:
+      - zabbix-server-data:/var/lib/zabbix
+    networks:
+      - watchlive_network
+
+  zabbix_agent:
+    container_name: zabbix_agent
+    build:
+      target: zabbix_agent
+      dockerfile: docker/Dockerfile
+    restart: always
+    user: root
+    depends_on:
+      - zabbix_server
+    links:
+      - zabbix_server
+    privileged: true
+    environment:
+      - ZBX_HOSTNAME=zabbix_agent
+      - ZBX_SERVER_HOST=zabbix_server
+      - ZBX_SERVER_PORT=10051
+      - ZBX_SERVER_ACTIVE=zabbix_server
+    ports:
+      - "10050:10050"
+    networks:
+      - watchlive_network
+
+networks:
+  watchlive_network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  zabbix-server-data:
+    # driver: local
+    # driver_opts:
+    #   type: nfs
+    #   o: nfservs=4,addr=localhost,rw44
+    #   device: ":NFS_VOL/HDD/zabbix"
